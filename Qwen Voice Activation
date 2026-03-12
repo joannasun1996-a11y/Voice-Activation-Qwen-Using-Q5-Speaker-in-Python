@@ -1,0 +1,73 @@
+import sounddevice as sd
+import whisper
+import scipy.io.wavfile as wav
+import os
+
+samplerate = 48000
+duration = 5
+device = 11   # your Q5 mic device
+
+print("Loading Whisper...")
+model = whisper.load_model("base")
+
+print("Say 'hi' to start talking.")
+
+while True:
+
+    print("\nListening...")
+
+    recording = sd.rec(int(duration * samplerate),
+                       samplerate=samplerate,
+                       channels=1,
+                       device=device)
+
+    sd.wait()
+
+    wav.write("temp.wav", samplerate, recording)
+
+    result = model.transcribe("temp.wav", fp16=False)
+
+    text = result["text"].strip().lower()
+
+    print("You said:", text)
+
+    # Wake word
+    if "hi" in text:
+
+        print("Qwen activated. Start talking.")
+
+        while True:
+
+            print("\nSpeak to Qwen...")
+
+            recording = sd.rec(int(duration * samplerate),
+                               samplerate=samplerate,
+                               channels=1,
+                               device=device)
+
+            sd.wait()
+
+            wav.write("temp.wav", samplerate, recording)
+
+            result = model.transcribe("temp.wav", fp16=False)
+
+            user_text = result["text"].strip()
+
+            if user_text == "":
+                continue
+
+            print("You:", user_text)
+
+            response = os.popen(
+                f'ollama run qwen2:1.5b "{user_text}"'
+            ).read()
+
+            print("Qwen:", response)
+
+            os.system(
+                f'echo "{response}" | espeak --stdout | aplay -D plughw:2,0'
+            )
+
+            if "stop" in user_text.lower():
+                print("Conversation ended.")
+                break
