@@ -1,38 +1,73 @@
 import sounddevice as sd
 import whisper
 import scipy.io.wavfile as wav
+import numpy as np
 import os
-
-samplerate = 48000
-duration = 5
-device = 11   # your Q5 mic device
 
 print("Loading Whisper...")
 model = whisper.load_model("base")
 
-print("Say 'hi' to start talking.")
+# -------- AUTO DETECT USB MIC --------
+
+device = None
+devices = sd.query_devices()
+
+for i, d in enumerate(devices):
+    if "usb" in d['name'].lower():
+        device = i
+        print("Using mic:", d['name'], "id:", i)
+        break
+
+if device is None:
+    print("No USB microphone found")
+    exit()
+
+# use correct samplerate automatically
+samplerate = int(sd.query_devices(device)['default_samplerate'])
+
+duration = 5
+
+print("Say 'hello' to start.")
+
+# -------- MAIN LOOP --------
 
 while True:
 
     print("\nListening...")
 
-    recording = sd.rec(int(duration * samplerate),
-                       samplerate=samplerate,
-                       channels=1,
-                       device=device)
+    recording = sd.rec(
+        int(duration * samplerate),
+        samplerate=samplerate,
+        channels=1,
+        device=device
+    )
 
     sd.wait()
 
+    # -------- VOLUME DEBUG --------
+    audio = recording.flatten()
+    volume = np.max(np.abs(audio))
+
+    print("Volume:", volume)
+
+    # ignore silence
+    if volume < 0.02:
+        print("Too quiet, ignoring...")
+        continue
+
+    # normalize audio
+    audio = audio / np.max(np.abs(audio))
+
     wav.write("temp.wav", samplerate, recording)
 
-    result = model.transcribe("temp.wav", fp16=False)
+    result = model.transcribe("temp.wav", fp16=False, language="en")
 
     text = result["text"].strip().lower()
 
     print("You said:", text)
 
-    # Wake word
-    if "hi" in text:
+    # -------- WAKE WORD --------
+    if "hello" in text:
 
         print("Qwen activated. Start talking.")
 
@@ -40,16 +75,30 @@ while True:
 
             print("\nSpeak to Qwen...")
 
-            recording = sd.rec(int(duration * samplerate),
-                               samplerate=samplerate,
-                               channels=1,
-                               device=device)
+            recording = sd.rec(
+                int(duration * samplerate),
+                samplerate=samplerate,
+                channels=1,
+                device=device
+            )
 
             sd.wait()
 
+            # volume debug again
+            audio = recording.flatten()
+            volume = np.max(np.abs(audio))
+
+            print("Volume:", volume)
+
+            if volume < 0.02:
+                print("Too quiet, ignoring...")
+                continue
+
+            audio = audio / np.max(np.abs(audio))
+
             wav.write("temp.wav", samplerate, recording)
 
-            result = model.transcribe("temp.wav", fp16=False)
+            result = model.transcribe("temp.wav", fp16=False, language="en")
 
             user_text = result["text"].strip()
 
@@ -58,12 +107,15 @@ while True:
 
             print("You:", user_text)
 
+            print("Thinking...")
+
             response = os.popen(
                 f'ollama run qwen2:1.5b "{user_text}"'
             ).read()
 
             print("Qwen:", response)
 
+            # play through Q5 speaker (card 2)
             os.system(
                 f'echo "{response}" | espeak --stdout | aplay -D plughw:2,0'
             )
